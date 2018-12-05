@@ -278,6 +278,7 @@ module pyrm_execute_block(
        end
      // begin 32-bit memory operations
      end else if(op == `OP_LOAD) begin
+       //$display("LOAD: address offset = %d, instruction = %h", $signed({{52{immediate[11]}}, immediate}), inst_pyri);
        rdata_pyro = $signed(in1_pyri) + $signed({{52{immediate[11]}}, immediate});
        rdata_valid_pyro = all_valid;
        raddr_pyro = {59'b0, rd};
@@ -305,6 +306,7 @@ module pyrm_execute_block(
        pc_valid_pyro = most_valid;
        inst_valid_pyro = most_valid;
      end else if(op == `OP_LUI) begin
+       //$display("LUI: upper immediate = %h", $signed({{32{u_immediate[19]}}, u_immediate, 12'b0}));
        rdata_pyro = $signed({{32{u_immediate[19]}}, u_immediate, 12'b0});
        rdata_valid_pyro = most_valid;
        raddr_pyro = {59'b0, rd};
@@ -312,6 +314,7 @@ module pyrm_execute_block(
        pc_valid_pyro = most_valid;
        inst_valid_pyro = most_valid;
      end else if(op == `OP_AUIPC) begin
+       //$display("AUIPC: upper immediate = %h", $signed({{32{u_immediate[19]}}, u_immediate, 12'b0}));
        rdata_pyro = $signed({{32{u_immediate[19]}}, u_immediate, 12'b0}) + $signed(pc_pyri);
        rdata_valid_pyro = most_valid;
        raddr_pyro = {59'b0, rd};

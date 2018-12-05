@@ -1,0 +1,4 @@
+Everything is replaced and passes the test bench
+To avoid warnings due to superfluous (but required) inputs, /* verilator lint_off UNUSED */
+is in effect for every submitted file. No other warnings, as makefile includes --Wall in the
+compile options
