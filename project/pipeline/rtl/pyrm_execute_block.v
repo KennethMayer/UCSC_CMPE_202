@@ -46,7 +46,18 @@ module pyrm_execute_block(
  reg          in1_retry_pyro;
  reg          in2_retry_pyro;
  reg          inst_retry_pyro;
- 
+   
+ reg 	      start_mul;
+ reg 	      reset_mul;  
+ reg [64-1:0] mul_in1, mul_in2;
+ reg 	      pending_op, pending_op_next;
+
+ reg 	      start_div;
+ reg 	      reset_div;
+ reg [64-1:0] div_in1, div_in2;
+   
+   
+ 	      
  reg [64-1:0] pc_pyro;
  reg          pc_valid_pyro;
 
@@ -74,6 +85,13 @@ module pyrm_execute_block(
  wire [19:0] u_immediate;
  reg [31:0] temp;
  wire retry;
+ 
+ wire done_mul;
+ wire [64-1:0] product_high, product_low;
+
+ wire done_div;   
+ wire [64-1:0] quotient, remainder;
+   
 
  assign some_valid = pc_valid_pyri & inst_valid_pyri; // JAL needs no source
  assign most_valid = in1_valid_pyri & pc_valid_pyri & inst_valid_pyri; // some instructions need only one source
@@ -106,6 +124,17 @@ module pyrm_execute_block(
    
    rdata_pyro = 64'b0;
    rdata_valid_pyro = 1'b0;
+
+   pending_op_next = pending_op;
+   start_mul = 1'b0;
+   reset_mul = 1'b0;  
+   mul_in1 = 64'b0;
+   mul_in2 = 64'b0;
+
+   start_div = 1'b0;
+   reset_div = 1'b0;
+   div_in1 = 64'b0;
+   div_in2 = 64'b0;
 
    {pc_retry_pyro, in1_retry_pyro, in2_retry_pyro, inst_retry_pyro} = 4'b1111;
    if(!retry) begin
@@ -278,7 +307,6 @@ module pyrm_execute_block(
        end
      // begin 32-bit memory operations
      end else if(op == `OP_LOAD) begin
-       //$display("LOAD: address offset = %d, instruction = %h", $signed({{52{immediate[11]}}, immediate}), inst_pyri);
        rdata_pyro = $signed(in1_pyri) + $signed({{52{immediate[11]}}, immediate});
        rdata_valid_pyro = all_valid;
        raddr_pyro = {59'b0, rd};
@@ -306,7 +334,6 @@ module pyrm_execute_block(
        pc_valid_pyro = most_valid;
        inst_valid_pyro = most_valid;
      end else if(op == `OP_LUI) begin
-       //$display("LUI: upper immediate = %h", $signed({{32{u_immediate[19]}}, u_immediate, 12'b0}));
        rdata_pyro = $signed({{32{u_immediate[19]}}, u_immediate, 12'b0});
        rdata_valid_pyro = most_valid;
        raddr_pyro = {59'b0, rd};
@@ -314,7 +341,6 @@ module pyrm_execute_block(
        pc_valid_pyro = most_valid;
        inst_valid_pyro = most_valid;
      end else if(op == `OP_AUIPC) begin
-       //$display("AUIPC: upper immediate = %h", $signed({{32{u_immediate[19]}}, u_immediate, 12'b0}));
        rdata_pyro = $signed({{32{u_immediate[19]}}, u_immediate, 12'b0}) + $signed(pc_pyri);
        rdata_valid_pyro = most_valid;
        raddr_pyro = {59'b0, rd};
@@ -375,11 +401,316 @@ module pyrm_execute_block(
        rdata_valid_pyro = all_valid;
        raddr_pyro = {59'b0, rd};
        raddr_valid_pyro = all_valid;
+     end else if(op == `OP_ARITHM) begin
+	if(funct7 == `FUNCT7_ARITHM) begin
+	   case(funct3)
+	     `FUNCT3_ARITHM_MUL: begin
+		if(!pending_op) begin // start the multiplication
+		   start_mul = 1'b1; // once it starts, it won't stop unless the block is reset
+		   mul_in1 = in1_pyri;
+		   mul_in2 = in2_pyri;
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_mul) begin
+		      rdata_pyro = product_low;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      raddr_valid_pyro = all_valid;
+		      reset_mul = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHM_MULH: begin // note: the multiplier does signed operations by default
+		if(!pending_op) begin
+		   start_mul = 1'b1;
+		   mul_in1 = in1_pyri;
+		   mul_in2 = in2_pyri;
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_mul) begin
+		      rdata_pyro = product_high;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      raddr_valid_pyro = all_valid;
+		      reset_mul = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHM_MULHSU: begin // signed x unsigned
+		if(!pending_op) begin
+		   start_mul = 1'b1;
+		   if($signed(in2_pyri) < $signed(64'b0))
+		     mul_in2 = ~in1_pyri + 64'b1;
+		   else
+		     mul_in2 = in2_pyri;
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_mul) begin
+		      rdata_pyro = product_high;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      raddr_valid_pyro = all_valid;
+		      reset_mul = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHM_MULHU: begin // unsigned x unsigned
+		if(!pending_op) begin
+		   start_mul = 1'b1;
+		   if($signed(in1_pyri) < $signed(64'b0))
+		     mul_in1 = ~in1_pyri + 64'b1;
+		   else
+		     mul_in1 = in1_pyri;
+		   if($signed(in2_pyri) < $signed(64'b0))
+		     mul_in2 = ~in1_pyri + 64'b1;
+		   else
+		     mul_in2 = in2_pyri;
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_mul) begin
+		      rdata_pyro = product_high;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      raddr_valid_pyro = all_valid;
+		      reset_mul = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHM_DIV: begin
+		if(!pending_op) begin
+		   start_div = 1'b1;
+		   div_in1 = in1_pyri;
+		   div_in2 = in2_pyri;
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_div) begin
+		      rdata_pyro = quotient;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      reset_div = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHM_DIVU: begin
+		if(!pending_op) begin
+		   start_div = 1'b1;
+		   if($signed(in1_pyri) < $signed(64'b0))
+		     div_in1 = ~in1_pyri + 64'b1;
+		   else
+		     div_in1 = in1_pyri;
+		   if($signed(in2_pyri) < $signed(64'b0))
+		     div_in2 = ~in2_pyri + 64'b1;
+		   else
+		     div_in2 = in2_pyri;
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_div) begin
+		      rdata_pyro = quotient;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      reset_div = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHM_REM: begin
+		if(!pending_op) begin
+		   start_div = 1'b1;
+		     div_in1 = in1_pyri;
+		     div_in2 = in2_pyri;
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_div) begin
+		      rdata_pyro = remainder;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      reset_div = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHM_REMU: begin
+		if(!pending_op) begin
+		   start_div = 1'b1;
+		   if($signed(in1_pyri) < $signed(64'b0))
+		     div_in1 = ~in1_pyri + 64'b1;
+		   else
+		     div_in1 = in1_pyri;
+		   if($signed(in2_pyri) < $signed(64'b0))
+		     div_in2 = ~in2_pyri + 64'b1;
+		   else
+		     div_in2 = in2_pyri;
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_div) begin
+		      rdata_pyro = remainder;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      raddr_valid_pyro = all_valid;
+		      reset_div = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	   endcase // case (funct3)
+	end // if (funct7 == `FUNCT7_ARITHM)
+     end else if(op == `OP_ARITHMW) begin // if (op == `OP_ARITHM)
+	if(funct7 == `FUNCT7_ARITHMW) begin
+	   case(funct3)
+	     `FUNCT3_ARITHMW_MULW: begin
+		if(!pending_op) begin
+		   start_mul = 1'b1;
+		   mul_in1 = {{32{in1_pyri[63]}}, in1_pyri[31:0]};
+		   mul_in2 = {{32{in2_pyri[63]}}, in2_pyri[31:0]};
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_mul) begin
+		      rdata_pyro = product_low;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      raddr_valid_pyro = all_valid;
+		      reset_mul = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHMW_DIVW: begin
+		if(!pending_op) begin
+		   start_div = 1'b1;
+		   div_in1 = {{32{in1_pyri[63]}}, in1_pyri[31:0]};
+		   div_in2 = {{32{in2_pyri[63]}}, in2_pyri[31:0]};
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_div) begin
+		      rdata_pyro = quotient;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      raddr_valid_pyro = all_valid;
+		      reset_div = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHMW_DIVUW: begin
+		if(!pending_op) begin
+		   start_div = 1'b1;
+		   if($signed(in1_pyri) < $signed(64'b0)) begin
+		      div_in1 = ~in1_pyri + 64'b1;
+		      div_in1 = {32'b0, div_in1[31:0]};
+		   end else begin
+		      div_in1 = {32'b0, in1_pyri[31:0]};
+		   end
+		   
+		   if($signed(in2_pyri) < $signed(64'b0)) begin
+		      div_in2 = ~in2_pyri + 64'b1;
+		      div_in2 = {32'b0, div_in2[31:0]};
+		   end else
+		     div_in2 = {32'b0, in2_pyri[31:0]};
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_div) begin
+		      rdata_pyro = quotient;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      raddr_valid_pyro = all_valid;
+		      reset_div = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHMW_REMW: begin
+		if(!pending_op) begin
+		   start_div = 1'b1;
+		   div_in1 = {{32{in1_pyri[63]}}, in1_pyri[31:0]};
+		   div_in2 = {{32{in2_pyri[63]}}, in2_pyri[31:0]};
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_div) begin
+		      rdata_pyro = remainder;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      raddr_valid_pyro = all_valid;
+		      reset_div = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end
+	     end
+	     `FUNCT3_ARITHMW_REMUW: begin
+		if(!pending_op) begin
+		   start_div = 1'b1;
+		   if($signed(in1_pyri) < $signed(64'b0)) begin
+		      div_in1 = ~in1_pyri + 64'b1;
+		      div_in1 = {32'b0, div_in1[31:0]};
+		   end else begin
+		      div_in1 = {32'b0, in1_pyri[31:0]};
+		   end
+		   
+		   if($signed(in2_pyri) < $signed(64'b0)) begin
+		      div_in2 = ~in2_pyri + 64'b1;
+		      div_in2 = {32'b0, div_in2[31:0]};
+		   end else
+		     div_in2 = {32'b0, in2_pyri[31:0]};
+		   pending_op_next = 1'b1;
+		end else begin
+		   if(done_div) begin
+		      rdata_pyro = remainder;
+		      rdata_valid_pyro = all_valid;
+		      raddr_pyro = {59'b0, rd};
+		      raddr_valid_pyro = all_valid;
+		      reset_div = 1'b1;
+		      pending_op_next = 1'b0;
+		   end
+		end		
+	     end
+	     default: begin
+		rdata_valid_pyro = 1'b0;
+		raddr_valid_pyro = 1'b0;
+	     end
+	   endcase // case (funct3)
+	end
      end
+      
     if(rdata_valid_pyro | raddr_valid_pyro | branch_pc_valid_pyro) // if at least one of these is the valid, no need to retry
       {pc_retry_pyro, in1_retry_pyro, in2_retry_pyro, inst_retry_pyro} = 4'b0000;
    end
- end
+ end // always @ (*)
+
+   multiplication_block 
+     mult_block (.clk(clk), 
+		 .reset_i(reset_mul),
+		 .start_i(start_mul),
+		 .multiplier_i(mul_in1),
+		 .multiplicand_i(mul_in2),
+		 .done_o(done_mul), 
+		 .product_low_o(product_low), 
+		 .product_high_o(product_high)
+		 );
+
+   division_block
+     div_block(.clk(clk),
+	       .reset_i(reset_div),
+	       .start_i(start_div),
+	       .dividend_i(div_in1),
+	       .divisor_i(div_in2),
+	       .done_o(done_div),
+	       .quotient_o(quotient),
+	       .remainder_o(remainder)
+	       );
+   
+   flop
+     #(.Bits(1)) pending_op_flop
+       (.clk(clk),
+	.reset(reset_pyri),
+	.load(1'b0),
+	.load_val(1'b0),
+	.d (pending_op_next),
+	.q (pending_op)
+	);
 
 endmodule
 /* verilator lint_off UNUSED */

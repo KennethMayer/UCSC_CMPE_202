@@ -108,7 +108,7 @@ always @(*) begin
       raw_next[reg_addr_pyri[4:0]] = 1'b0;
   end
   if(all_valid && !retry) begin
-    if(opcode == `OP_ARITH || opcode == `OP_ARITH_W || opcode == `OP_BRANCH || opcode == `OP_STORE) begin
+    if(opcode == `OP_ARITH || opcode == `OP_ARITH_W || opcode == `OP_BRANCH || opcode == `OP_STORE || opcode == `OP_ARITHM) begin
       //$display("arith or something");
       if(!(raw[rs1] || raw[rs2]) && !(opcode == `OP_BRANCH && raw[rd])) begin
         inst_pyro = inst_pyri;
@@ -134,7 +134,7 @@ always @(*) begin
           src2_pyro = rs2_data;
           src2_valid_pyro = 1'b1;
         end
-        if(opcode == `OP_ARITH || opcode == `OP_ARITH_W)
+        if(opcode == `OP_ARITH || opcode == `OP_ARITH_W || opcode == `OP_ARITHM)
           raw_next[rd] = 1'b1;
       end
     end else if(opcode == `OP_ARITHI || opcode == `OP_ARITHI_W || opcode == `OP_LOAD) begin
